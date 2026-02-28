@@ -23,9 +23,8 @@ class ProductModel {
   bool get isSoldByLiters => unitType == AppConstants.unitLiters;
   bool get isSoldByPieces => unitType == AppConstants.unitPieces;
 
-  /// Количество для отображения (для кг — в кг, для шт — как есть)
+  /// Количество для отображения (quantity уже в кг/л/шт)
   double get displayQuantity {
-    if (isSoldByKg) return quantity / 1000.0; // храним в граммах
     return quantity.toDouble();
   }
 

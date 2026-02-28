@@ -105,9 +105,9 @@ class _ProductsListPageState extends State<ProductsListPage> {
               if (newPrice == null) return;
               int newQuantity;
               if (product.isSoldByKg || product.isSoldByLiters) {
-                final val = double.tryParse(quantityController.text);
+                final val = double.tryParse(quantityController.text.replaceAll(',', '.'));
                 if (val == null || val <= 0) return;
-                newQuantity = (val * 1000).round();
+                newQuantity = val.round(); // храним в кг/л
               } else {
                 final q = int.tryParse(quantityController.text);
                 if (q == null || q <= 0) return;
@@ -290,7 +290,7 @@ class _ProductsListPageState extends State<ProductsListPage> {
   }
 
   Widget _buildProductCard(ProductModel product) {
-    final threshold = product.isSoldByPieces ? 10 : 10000; // для кг/л — 10 кг = 10000 г
+    final threshold = 10; // порог для всех единиц (шт, кг, л)
     final quantityColor = product.quantity < threshold ? AppTheme.errorColor : AppTheme.successColor;
     final quantityBgColor = product.quantity < threshold ? const Color(0xFFFEE2E2) : const Color(0xFFD1FAE5);
     

@@ -283,24 +283,24 @@ class _AddProductPageState extends State<AddProductPage> {
       int qty;
       double? weightMarker;
       if (_productUnit == 'kg') {
-        final kg = double.tryParse(_quantityController.text);
+        final kg = double.tryParse(_quantityController.text.replaceAll(',', '.'));
         if (kg == null || kg <= 0) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Введите корректное количество (кг)'), backgroundColor: Colors.red),
           );
           return;
         }
-        qty = (kg * 1000).round(); // храним в граммах
+        qty = kg.round(); // храним в кг (weight=1)
         weightMarker = AppConstants.weightMarkerKg;
       } else if (_productUnit == 'liters') {
-        final liters = double.tryParse(_quantityController.text);
+        final liters = double.tryParse(_quantityController.text.replaceAll(',', '.'));
         if (liters == null || liters <= 0) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Введите корректное количество (л)'), backgroundColor: Colors.red),
           );
           return;
         }
-        qty = (liters * 1000).round(); // храним в мл
+        qty = liters.round(); // храним в литрах (weight=2)
         weightMarker = AppConstants.weightMarkerLiters;
       } else {
         final pcs = int.tryParse(_quantityController.text);
@@ -311,7 +311,7 @@ class _AddProductPageState extends State<AddProductPage> {
           return;
         }
         qty = pcs;
-        weightMarker = AppConstants.weightMarkerPieces; // для grocery бэкенд требует weight
+        weightMarker = null; // штуки: weight=null
       }
 
       final product = ProductModel(

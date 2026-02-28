@@ -60,13 +60,8 @@ class _SalesPageState extends State<SalesPage> {
                 final qtyRaw = it['quantity'];
                 final qtyInt = (qtyRaw is num) ? qtyRaw.toInt() : int.tryParse(qtyRaw.toString()) ?? 0;
                 final unit = (it['quantityUnit'] ?? it['quantity_unit'] ?? 'шт').toString();
-                // Для grocery/general: quantity в граммах/мл, salePrice за кг/л
-                double itemTotal;
-                if (unit == 'кг' || unit == 'л') {
-                  itemTotal = (qtyInt / 1000.0) * price;
-                } else {
-                  itemTotal = price * qtyInt;
-                }
+                // quantity уже в кг/л/шт
+                final itemTotal = price * qtyInt;
                 sum += itemTotal;
               }
             }

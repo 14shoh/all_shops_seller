@@ -339,14 +339,14 @@ class _CreateSalePageState extends State<CreateSalePage> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: product.quantity > 0 
-                    ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
+                    ? (product.quantity < 10 
                         ? Colors.orange.withOpacity(0.1) 
                         : Colors.green.withOpacity(0.1))
                     : Colors.red.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: product.quantity > 0 
-                      ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
+                      ? (product.quantity < 10 
                           ? Colors.orange 
                           : Colors.green)
                       : Colors.red,
@@ -357,12 +357,12 @@ class _CreateSalePageState extends State<CreateSalePage> {
                 children: [
                   Icon(
                     product.quantity > 0 
-                        ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
+                        ? (product.quantity < 10 
                             ? Icons.warning_amber_rounded 
                             : Icons.check_circle)
                         : Icons.error_outline,
                     color: product.quantity > 0 
-                        ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
+                        ? (product.quantity < 10 
                             ? Colors.orange 
                             : Colors.green)
                         : Colors.red,
@@ -385,7 +385,7 @@ class _CreateSalePageState extends State<CreateSalePage> {
                           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: product.quantity > 0 
-                                ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
+                                ? (product.quantity < 10 
                                     ? Colors.orange 
                                     : Colors.green)
                                 : Colors.red,
@@ -451,7 +451,7 @@ class _CreateSalePageState extends State<CreateSalePage> {
                   );
                   return;
                 }
-                quantityInt = (val * 1000).round(); // в граммы/мл
+                quantityInt = val.round(); // quantity в кг/л
               } else {
                 quantityInt = int.tryParse(_quantityController.text) ?? 1;
                 if (quantityInt <= 0) {

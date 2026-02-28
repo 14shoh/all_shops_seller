@@ -195,7 +195,7 @@ class SaleProvider extends ChangeNotifier {
 
   double _calcTotalPrice(int quantity, double salePrice, String unit) {
     if (unit == 'кг' || unit == 'л') {
-      return (quantity / 1000.0) * salePrice; // salePrice за кг/л
+      return quantity * salePrice; // quantity в кг/л, salePrice за кг/л
     }
     return salePrice * quantity;
   }

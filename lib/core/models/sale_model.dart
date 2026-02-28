@@ -20,9 +20,7 @@ class SaleItemModel {
   });
 
   double get displayQuantity {
-    if (quantityUnit == 'кг') return quantity / 1000.0;
-    if (quantityUnit == 'л') return quantity / 1000.0;
-    return quantity.toDouble();
+    return quantity.toDouble(); // quantity уже в кг/л/шт
   }
 
   factory SaleItemModel.fromJson(Map<String, dynamic> json) {
