@@ -267,7 +267,7 @@ class _SupplierDebtsPageState extends State<SupplierDebtsPage> {
                   const SizedBox(height: AppTheme.paddingMD),
                   
                   DropdownButtonFormField<String>(
-                    value: safeSelected,
+                    initialValue: safeSelected,
                     isExpanded: true,
                     decoration: InputDecoration(
                       labelText: 'Фирма',

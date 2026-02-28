@@ -10,6 +10,7 @@ class AppConfig {
   // Пример (часто для hotspot/Wi‑Fi): http://172.20.10.3:3000
   //
   // ВАЖНО:
+  // - Production (по умолчанию): http://155.212.211.121:3000
   // - Android эмулятор: http://10.0.2.2:3000 (доступ к localhost ПК)
   // - iOS симулятор: http://localhost:3000
   // - Реальный телефон: http://<IP_ПК>:3000 (и разрешить порт в firewall)
@@ -20,9 +21,11 @@ class AppConfig {
   }
 
   static String _defaultBaseUrlByPlatform() {
-    if (Platform.isAndroid) return 'http://10.0.2.2:3000';
-    if (Platform.isIOS) return 'http://localhost:3000';
-    return 'http://localhost:3000';
+    // По умолчанию используем боевой сервер, dart-define остаётся приоритетнее.
+    const prod = 'http://155.212.211.121:3000';
+    if (Platform.isAndroid) return prod;
+    if (Platform.isIOS) return prod;
+    return prod;
   }
   
   // API Endpoints

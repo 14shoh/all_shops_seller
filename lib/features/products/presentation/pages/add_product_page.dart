@@ -27,9 +27,96 @@ class _AddProductPageState extends State<AddProductPage> {
   final _weightController = TextEditingController();
   
   String? _selectedSize;
+  String _sizeType = 'letter'; // letter, numeric, shoes
   Map<String, int> _sizeQuantities = {}; // Размер -> Количество
   bool _showBarcodeScanner = false;
   int? _shopId;
+  String _productUnit = 'pieces'; // pieces, kg, liters (для grocery/general)
+
+  List<String> _getAvailableSizes() {
+    switch (_sizeType) {
+      case 'letter':
+        return AppConstants.clothingSizes;
+      case 'numeric':
+        return AppConstants.numericSizes;
+      case 'shoes':
+        return AppConstants.shoeSizes;
+      default:
+        return AppConstants.clothingSizes;
+    }
+  }
+
+  Widget _buildSizeTypeButton(String label, String type) {
+    final isSelected = _sizeType == type;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _sizeType = type;
+          _selectedSize = null;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: isSelected
+              ? const LinearGradient(
+                  colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                )
+              : null,
+          color: isSelected ? null : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF6366F1) : const Color(0xFFE2E8F0),
+            width: 1.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.white : const Color(0xFF64748B),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUnitButton(String label, String unit, IconData icon) {
+    final isSelected = _productUnit == unit;
+    return GestureDetector(
+      onTap: () => setState(() => _productUnit = unit),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: isSelected
+              ? const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)])
+              : null,
+          color: isSelected ? null : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF6366F1) : const Color(0xFFE2E8F0),
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: isSelected ? Colors.white : const Color(0xFF64748B)),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? Colors.white : const Color(0xFF64748B),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -100,6 +187,14 @@ class _AddProductPageState extends State<AddProductPage> {
     });
   }
 
+  String _getQuantityLabel() {
+    switch (_productUnit) {
+      case 'kg': return 'Количество (кг)';
+      case 'liters': return 'Количество (л)';
+      default: return 'Количество (шт)';
+    }
+  }
+
   void _addSizeQuantity() {
     if (_selectedSize == null || _selectedSize!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -151,15 +246,6 @@ class _AddProductPageState extends State<AddProductPage> {
       return;
     }
 
-    // Валидация для продуктов
-    if (shop?.type == AppConstants.shopTypeGrocery && 
-        (_weightController.text.isEmpty || double.tryParse(_weightController.text) == null)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Введите корректный вес'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
     final price = double.parse(_priceController.text);
 
     if (shop?.type == AppConstants.shopTypeClothing && _sizeQuantities.isNotEmpty) {
@@ -178,7 +264,11 @@ class _AddProductPageState extends State<AddProductPage> {
         );
 
         final success = await productProvider.addProduct(product);
-        if (success) successCount++; else allSuccess = false;
+        if (success) {
+          successCount++;
+        } else {
+          allSuccess = false;
+        }
       }
 
       if (mounted) {
@@ -190,13 +280,47 @@ class _AddProductPageState extends State<AddProductPage> {
         }
       }
     } else {
+      int qty;
+      double? weightMarker;
+      if (_productUnit == 'kg') {
+        final kg = double.tryParse(_quantityController.text);
+        if (kg == null || kg <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Введите корректное количество (кг)'), backgroundColor: Colors.red),
+          );
+          return;
+        }
+        qty = (kg * 1000).round(); // храним в граммах
+        weightMarker = AppConstants.weightMarkerKg;
+      } else if (_productUnit == 'liters') {
+        final liters = double.tryParse(_quantityController.text);
+        if (liters == null || liters <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Введите корректное количество (л)'), backgroundColor: Colors.red),
+          );
+          return;
+        }
+        qty = (liters * 1000).round(); // храним в мл
+        weightMarker = AppConstants.weightMarkerLiters;
+      } else {
+        final pcs = int.tryParse(_quantityController.text);
+        if (pcs == null || pcs <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Введите корректное количество'), backgroundColor: Colors.red),
+          );
+          return;
+        }
+        qty = pcs;
+        weightMarker = AppConstants.weightMarkerPieces; // для grocery бэкенд требует weight
+      }
+
       final product = ProductModel(
         name: _nameController.text.trim(),
         barcode: _barcodeController.text.trim().isEmpty ? null : _barcodeController.text.trim(),
         category: _categoryController.text.trim().isEmpty ? null : _categoryController.text.trim(),
         purchasePrice: price,
-        quantity: int.parse(_quantityController.text),
-        weight: _weightController.text.isEmpty ? null : double.parse(_weightController.text),
+        quantity: qty,
+        weight: (shop?.type == AppConstants.shopTypeGrocery) ? weightMarker : (_productUnit == 'pieces' ? null : weightMarker),
         shopId: _shopId!,
       );
 
@@ -318,34 +442,103 @@ class _AddProductPageState extends State<AddProductPage> {
                             Expanded(
                               child: AppTextField(
                                 controller: _quantityController,
-                                label: 'Количество',
+                                label: _getQuantityLabel(),
                                 prefixIcon: Icons.numbers_rounded,
-                                keyboardType: TextInputType.number,
+                                keyboardType: _productUnit == 'pieces'
+                                    ? TextInputType.number
+                                    : const TextInputType.numberWithOptions(decimal: true),
                                 validator: (value) => value == null || value.isEmpty ? 'Введите кол-во' : null,
                               ),
                             ),
                         ],
                       ),
-                      
-                      if (shop?.type == AppConstants.shopTypeGrocery) ...[
-                        const SizedBox(height: AppTheme.paddingMD),
-                        AppTextField(
-                          controller: _weightController,
-                          label: 'Вес (кг)',
-                          prefixIcon: Icons.scale_rounded,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        ),
+                      if (shop?.type == AppConstants.shopTypeGrocery || shop?.type == AppConstants.shopTypeGeneral) ...[
+                        if (shop?.type != AppConstants.shopTypeClothing) ...[
+                          const SizedBox(height: AppTheme.paddingMD),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEEF2FF),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.2)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Единица измерения:',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF475569),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Row(
+                                    children: [
+                                      _buildUnitButton('Штуки', 'pieces', Icons.inventory_2_rounded),
+                                      const SizedBox(width: 8),
+                                      _buildUnitButton('Килограммы', 'kg', Icons.scale_rounded),
+                                      const SizedBox(width: 8),
+                                      _buildUnitButton('Литры', 'liters', Icons.water_drop_rounded),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
 
                       if (shop?.type == AppConstants.shopTypeClothing) ...[
                         const SizedBox(height: AppTheme.paddingXL),
                         SectionHeader(title: 'Размеры и количество'),
                         const SizedBox(height: AppTheme.paddingMD),
+                        
+                        // Выбор категории размеров
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF2FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.2)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Выберите тип размера:',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF475569),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    _buildSizeTypeButton('Буквенные', 'letter'),
+                                    const SizedBox(width: 8),
+                                    _buildSizeTypeButton('Цифровые', 'numeric'),
+                                    const SizedBox(width: 8),
+                                    _buildSizeTypeButton('Обувь', 'shoes'),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        const SizedBox(height: AppTheme.paddingMD),
                         Row(
                           children: [
                             Expanded(
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: AppTheme.paddingMD),
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
                                 decoration: BoxDecoration(
                                   color: AppTheme.surfaceColor,
                                   borderRadius: BorderRadius.circular(AppTheme.radiusMD),
@@ -354,10 +547,19 @@ class _AddProductPageState extends State<AddProductPage> {
                                 child: DropdownButtonHideUnderline(
                                   child: DropdownButton<String>(
                                     value: _selectedSize,
-                                    hint: Text('Размер', style: Theme.of(context).textTheme.bodyMedium),
+                                    hint: Text(
+                                      'Размер',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
                                     isExpanded: true,
-                                    items: AppConstants.clothingSizes.map((size) {
-                                      return DropdownMenuItem(value: size, child: Text(size));
+                                    items: _getAvailableSizes().map((size) {
+                                      return DropdownMenuItem(
+                                        value: size,
+                                        child: Text(
+                                          size,
+                                          style: const TextStyle(fontSize: 14),
+                                        ),
+                                      );
                                     }).toList(),
                                     onChanged: (val) => setState(() => _selectedSize = val),
                                   ),
@@ -396,21 +598,35 @@ class _AddProductPageState extends State<AddProductPage> {
                           ],
                         ),
                         const SizedBox(height: AppTheme.paddingMD),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _sizeQuantities.entries.map((entry) {
-                            return Chip(
-                              backgroundColor: const Color(0xFFEEF2FF),
-                              side: BorderSide.none,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              label: Text('${entry.key}: ${entry.value} шт.', 
-                                style: const TextStyle(color: Color(0xFF6366F1), fontWeight: FontWeight.bold)),
-                              onDeleted: () => setState(() => _sizeQuantities.remove(entry.key)),
-                              deleteIconColor: const Color(0xFF6366F1),
-                            );
-                          }).toList(),
-                        ),
+                        if (_sizeQuantities.isNotEmpty)
+                          Container(
+                            constraints: const BoxConstraints(maxHeight: 200),
+                            child: SingleChildScrollView(
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: _sizeQuantities.entries.map((entry) {
+                                  return Chip(
+                                    backgroundColor: const Color(0xFFEEF2FF),
+                                    side: BorderSide.none,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    label: Text(
+                                      '${entry.key}: ${entry.value} шт.',
+                                      style: const TextStyle(
+                                        color: Color(0xFF6366F1),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    onDeleted: () => setState(() => _sizeQuantities.remove(entry.key)),
+                                    deleteIconColor: const Color(0xFF6366F1),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
                       ],
 
                       const SizedBox(height: 40),

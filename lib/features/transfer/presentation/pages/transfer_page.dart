@@ -198,7 +198,7 @@ class _TransferPageState extends State<TransferPage> {
                             const SizedBox(width: AppTheme.paddingSM),
                             Expanded(
                               child: Text(
-                                'Перевод на ${_phoneNumber} на сумму ${_amount.toStringAsFixed(2)} ₽',
+                                'Перевод на $_phoneNumber на сумму ${_amount.toStringAsFixed(2)} ₽',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                   color: AppTheme.primaryColor,
                                 ),

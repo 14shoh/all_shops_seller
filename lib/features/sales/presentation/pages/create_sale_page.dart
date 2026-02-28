@@ -314,7 +314,10 @@ class _CreateSalePageState extends State<CreateSalePage> {
 
   void _showAddProductDialog(ProductModel product) {
     _priceController.clear();
-    _quantityController.text = '1';
+    _quantityController.text = product.isSoldByKg || product.isSoldByLiters ? '1' : '1';
+
+    final unit = product.unitType;
+    final priceLabel = unit == 'кг' ? 'Цена за кг' : (unit == 'л' ? 'Цена за л' : 'Цена продажи');
 
     showDialog(
       context: context,
@@ -332,19 +335,18 @@ class _CreateSalePageState extends State<CreateSalePage> {
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ),
-            // Отображение остатка
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: product.quantity > 0 
-                    ? (product.quantity < 10 
+                    ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
                         ? Colors.orange.withOpacity(0.1) 
                         : Colors.green.withOpacity(0.1))
                     : Colors.red.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: product.quantity > 0 
-                      ? (product.quantity < 10 
+                      ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
                           ? Colors.orange 
                           : Colors.green)
                       : Colors.red,
@@ -355,12 +357,12 @@ class _CreateSalePageState extends State<CreateSalePage> {
                 children: [
                   Icon(
                     product.quantity > 0 
-                        ? (product.quantity < 10 
+                        ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
                             ? Icons.warning_amber_rounded 
                             : Icons.check_circle)
                         : Icons.error_outline,
                     color: product.quantity > 0 
-                        ? (product.quantity < 10 
+                        ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
                             ? Colors.orange 
                             : Colors.green)
                         : Colors.red,
@@ -379,11 +381,11 @@ class _CreateSalePageState extends State<CreateSalePage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${product.quantity} шт.',
+                          '${product.displayQuantity.toStringAsFixed(product.isSoldByPieces ? 0 : 2)} $unit',
                           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: product.quantity > 0 
-                                ? (product.quantity < 10 
+                                ? (product.quantity < (product.isSoldByPieces ? 10 : 10000) 
                                     ? Colors.orange 
                                     : Colors.green)
                                 : Colors.red,
@@ -398,20 +400,23 @@ class _CreateSalePageState extends State<CreateSalePage> {
             const SizedBox(height: 16),
             TextField(
               controller: _quantityController,
-              decoration: const InputDecoration(
-                labelText: 'Количество',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: 'Количество ($unit)',
+                border: const OutlineInputBorder(),
+                hintText: product.isSoldByPieces ? '1' : '0.5',
               ),
-              keyboardType: TextInputType.number,
+              keyboardType: product.isSoldByPieces 
+                  ? TextInputType.number 
+                  : const TextInputType.numberWithOptions(decimal: true),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: _priceController,
-              decoration: const InputDecoration(
-                labelText: 'Цена продажи',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: priceLabel,
+                border: const OutlineInputBorder(),
               ),
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
             ),
           ],
         ),
@@ -422,9 +427,7 @@ class _CreateSalePageState extends State<CreateSalePage> {
           ),
           ElevatedButton(
             onPressed: () {
-              final quantity = int.tryParse(_quantityController.text) ?? 1;
               final price = double.tryParse(_priceController.text);
-              
               if (price == null || price <= 0) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -435,11 +438,38 @@ class _CreateSalePageState extends State<CreateSalePage> {
                 return;
               }
 
-              if (product.quantity < quantity) {
+              int quantityInt;
+              if (product.isSoldByKg || product.isSoldByLiters) {
+                final inputText = _quantityController.text.trim().replaceAll(',', '.');
+                final val = double.tryParse(inputText);
+                if (val == null || val <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Введите корректное количество ($unit)'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                quantityInt = (val * 1000).round(); // в граммы/мл
+              } else {
+                quantityInt = int.tryParse(_quantityController.text) ?? 1;
+                if (quantityInt <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Введите корректное количество'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+              }
+
+              if (product.quantity < quantityInt) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
-                        'Недостаточно товара. Доступно: ${product.quantity}'),
+                        'Недостаточно товара. Доступно: ${product.displayQuantity.toStringAsFixed(product.isSoldByPieces ? 0 : 2)} $unit'),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -448,7 +478,7 @@ class _CreateSalePageState extends State<CreateSalePage> {
 
               context.read<SaleProvider>().addItemToSale(
                     product,
-                    quantity,
+                    quantityInt,
                     price,
                   );
               Navigator.pop(context);
@@ -495,10 +525,12 @@ class _CreateSalePageState extends State<CreateSalePage> {
     final success = await saleProvider.createSale();
 
     if (success && mounted) {
+      final message = saleProvider.lastOperationMessage ?? 'Продажа сохранена';
+      final isOfflineSaved = saleProvider.lastSaleSavedOffline;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Продажа успешно создана'),
-          backgroundColor: Colors.green,
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isOfflineSaved ? Colors.orange : Colors.green,
         ),
       );
       // Возвращаемся на экран оплаты, затем на экран продажи
@@ -773,7 +805,7 @@ class _CreateSalePageState extends State<CreateSalePage> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${item.quantity} шт. × ${item.salePrice.toStringAsFixed(2)} ${AppConstants.currencySymbol}',
+                                          '${item.displayQuantity.toStringAsFixed(item.quantityUnit == 'шт' ? 0 : 2)} ${item.quantityUnit} × ${item.salePrice.toStringAsFixed(2)} ${AppConstants.currencySymbol}',
                                           style: Theme.of(context).textTheme.bodySmall,
                                         ),
                                       ],

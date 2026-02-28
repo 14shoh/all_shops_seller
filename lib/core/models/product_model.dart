@@ -1,3 +1,5 @@
+import '../constants/app_constants.dart';
+
 class ProductModel {
   final int? id;
   final String name;
@@ -8,6 +10,24 @@ class ProductModel {
   final String? size;
   final double? weight;
   final int shopId;
+
+  /// Единица измерения: шт, кг, л (по weight-маркеру 0.001/1/2)
+  String get unitType {
+    if (weight == null) return AppConstants.unitPieces;
+    if (weight! >= 0.9 && weight! < 1.1) return AppConstants.unitKg;
+    if (weight! >= 1.9 && weight! < 2.1) return AppConstants.unitLiters;
+    return AppConstants.unitPieces; // старое или 0.001
+  }
+
+  bool get isSoldByKg => unitType == AppConstants.unitKg;
+  bool get isSoldByLiters => unitType == AppConstants.unitLiters;
+  bool get isSoldByPieces => unitType == AppConstants.unitPieces;
+
+  /// Количество для отображения (для кг — в кг, для шт — как есть)
+  double get displayQuantity {
+    if (isSoldByKg) return quantity / 1000.0; // храним в граммах
+    return quantity.toDouble();
+  }
 
   ProductModel({
     this.id,

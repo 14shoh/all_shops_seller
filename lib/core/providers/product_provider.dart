@@ -21,6 +21,7 @@ class ProductProvider extends ChangeNotifier {
   List<ProductModel> _products = [];
   List<ProductModel> _filteredProducts = [];
   bool _isLoading = false;
+  bool _isBackgroundRefreshing = false;
   String? _error;
   ShopModel? _shop;
   String _searchQuery = '';
@@ -30,12 +31,22 @@ class ProductProvider extends ChangeNotifier {
   bool _isSyncingPendingProducts = false;
   int _pendingProductsCount = 0;
   StreamSubscription<bool>? _connectivitySubscription;
-  
+  Future<void> Function()? _afterSyncCallback;
+  Timer? _pendingProductsRetryTimer;
+  int _pendingProductsRetryDelaySeconds = 15;
+
   static const String _pendingProductsKey = 'pending_products';
   static const String _productIdMappingKey = 'product_id_mapping'; // временный ID -> реальный ID
+
+  void setAfterSyncCallback(Future<void> Function()? cb) {
+    _afterSyncCallback = cb;
+  }
+  static const int _pageLimit = 500;
+  static const int _parallelPagesBatch = 8;
   
   List<ProductModel> get products => _filteredProducts.isEmpty && _searchQuery.isEmpty ? _products : _filteredProducts;
   bool get isLoading => _isLoading;
+  bool get isBackgroundRefreshing => _isBackgroundRefreshing;
   String? get error => _error;
   ShopModel? get shop => _shop;
   bool get isOffline => _isOffline;
@@ -65,10 +76,11 @@ class ProductProvider extends ChangeNotifier {
         notifyListeners();
         
         if (hasConnection) {
-          // Интернет восстановлен - синхронизируем очередь
-          await _syncPendingChanges();
-          // Синхронизируем офлайн товары
+          // Сначала быстро синхронизируем офлайн товары и продажи (не ждём тяжёлую загрузку списка)
           await syncPendingProducts();
+          await _afterSyncCallback?.call();
+          // Очередь обновлений и загрузка списка товаров — в фоне (не блокируем)
+          _syncPendingChanges();
         }
       },
     );
@@ -111,141 +123,154 @@ class ProductProvider extends ChangeNotifier {
   @override
   void dispose() {
     _connectivitySubscription?.cancel();
+    _pendingProductsRetryTimer?.cancel();
     super.dispose();
+  }
+
+  void _schedulePendingProductsRetry() {
+    _pendingProductsRetryTimer?.cancel();
+    _pendingProductsRetryTimer = Timer(
+      Duration(seconds: _pendingProductsRetryDelaySeconds),
+      () async {
+        try {
+          final hasInternet = await _connectivityService.hasInternetConnection();
+          if (hasInternet) {
+            await syncPendingProducts();
+            await _afterSyncCallback?.call();
+          }
+          final remaining = await getPendingProductsCount();
+          _pendingProductsCount = remaining;
+          if (remaining > 0) {
+            _pendingProductsRetryDelaySeconds = (_pendingProductsRetryDelaySeconds * 2).clamp(15, 120);
+            _schedulePendingProductsRetry();
+          } else {
+            _pendingProductsRetryDelaySeconds = 15;
+          }
+        } catch (_) {
+          _pendingProductsRetryDelaySeconds = (_pendingProductsRetryDelaySeconds * 2).clamp(15, 120);
+          _schedulePendingProductsRetry();
+        } finally {
+          notifyListeners();
+        }
+      },
+    );
   }
   
   Future<void> loadProducts() async {
-    _isLoading = true;
     _error = null;
+    _isLoading = true;
+    _isBackgroundRefreshing = false;
     notifyListeners();
-    
+
     try {
       final shopId = await _storageService.getShopId();
-      print('🔍 Загрузка товаров для shopId: $shopId');
-      
       if (shopId == null) {
         _error = 'Магазин не назначен';
         _isLoading = false;
         notifyListeners();
         return;
       }
-      
-      // Проверяем наличие интернета
+
+      // 1. Сразу показываем кеш (мгновенный список при входе/обновлении)
+      final cachedProducts = await _cacheService.getCachedProducts();
+      if (cachedProducts.isNotEmpty) {
+        _products = cachedProducts;
+        _filterProducts();
+        _isLoading = false;
+        _isBackgroundRefreshing = true;
+        _error = null;
+        notifyListeners();
+      }
+
       final hasInternet = await _connectivityService.hasInternetConnection();
       _isOffline = !hasInternet;
-      print('🌐 Интернет доступен: $hasInternet');
-      
-      if (hasInternet) {
-        // Загружаем с сервера
-        // Для мобильных приложений загружаем все товары сразу (они кешируются локально)
-        try {
-          // Загружаем все товары с максимальным лимитом (500) для офлайн работы
-          // Если товаров больше, загрузим все страницы
-          final response = await _apiService.get(
-            AppConfig.productsEndpoint,
-            queryParameters: {'limit': 500, 'page': 1},
-          );
-          
-          if (response.statusCode == 200) {
-            final data = response.data;
-            print('📦 Получены данные с сервера: ${data.runtimeType}');
-            
-            // Поддержка нового формата с пагинацией и старого формата (список)
-            if (data is Map && data.containsKey('data')) {
-              // Новый формат с пагинацией
-              final productsList = data['data'] as List;
-              final total = data['total'] ?? productsList.length;
-              final page = data['page'] ?? 1;
-              final limit = data['limit'] ?? 50;
-              final totalPages = data['totalPages'] ?? 1;
-              
-              print('📦 Формат с пагинацией: ${productsList.length} товаров из $total (страница $page из $totalPages, лимит $limit)');
-              
-              // Если есть еще страницы, загружаем их тоже
-              if (totalPages > 1 && productsList.length < total) {
-                print('⚠️ Обнаружено несколько страниц! Загружаем все товары...');
-                final allProducts = <ProductModel>[];
-                allProducts.addAll(productsList.map((json) => ProductModel.fromJson(json)).toList());
-                
-                // Загружаем остальные страницы
-                for (int p = 2; p <= totalPages; p++) {
-                  try {
-                    final nextResponse = await _apiService.get(
-                      AppConfig.productsEndpoint,
-                      queryParameters: {'limit': limit, 'page': p},
-                    );
-                    
-                    if (nextResponse.statusCode == 200) {
-                      final nextData = nextResponse.data;
-                      if (nextData is Map && nextData.containsKey('data')) {
-                        final nextProductsList = nextData['data'] as List;
-                        allProducts.addAll(nextProductsList.map((json) => ProductModel.fromJson(json)).toList());
-                        print('📦 Загружена страница $p: ${nextProductsList.length} товаров');
-                      }
-                    }
-                  } catch (e) {
-                    print('⚠️ Ошибка загрузки страницы $p: $e');
-                    break;
-                  }
-                }
-                
-                _products = allProducts;
-                print('✅ Всего загружено товаров со всех страниц: ${_products.length}');
-              } else {
-                _products = productsList
-                    .map((json) => ProductModel.fromJson(json))
-                    .toList();
-              }
-            } else if (data is List) {
-              // Старый формат (для обратной совместимости)
-              print('📦 Старый формат (список): ${data.length} товаров');
-              _products = data
-                  .map((json) => ProductModel.fromJson(json))
+
+      if (!hasInternet) {
+        if (cachedProducts.isEmpty) await _loadFromCache();
+        _isBackgroundRefreshing = false;
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+
+      // 2. Фоново загружаем с сервера (параллельно страницы)
+      try {
+        final response = await _apiService.get(
+          AppConfig.productsEndpoint,
+          queryParameters: {'limit': _pageLimit, 'page': 1},
+        );
+
+        if (response.statusCode != 200) {
+          throw Exception('Ошибка загрузки (код: ${response.statusCode})');
+        }
+
+        final data = response.data;
+        if (data is Map && data.containsKey('data')) {
+          final productsList = data['data'] as List;
+          final total = data['total'] as int? ?? productsList.length;
+          final limit = data['limit'] as int? ?? 50;
+          final totalPages = data['totalPages'] as int? ?? 1;
+
+          final allProducts = productsList
+              .map((json) => ProductModel.fromJson(json as Map<String, dynamic>))
+              .toList();
+
+          if (totalPages > 1 && allProducts.length < total) {
+            final remainingPages = List.generate(totalPages - 1, (i) => i + 2);
+            for (var i = 0; i < remainingPages.length; i += _parallelPagesBatch) {
+              final batch = remainingPages
+                  .skip(i)
+                  .take(_parallelPagesBatch)
                   .toList();
-            } else {
-              print('❌ Неожиданный формат данных: ${data.runtimeType}');
-              print('❌ Данные: $data');
-              _products = [];
-              _filteredProducts = [];
-            }
-            
-            print('✅ Загружено товаров: ${_products.length}');
-            if (_products.isNotEmpty) {
-              print('📦 Первый товар: id=${_products[0].id}, name=${_products[0].name}, shopId=${_products[0].shopId}');
-              if (_products.length > 1) {
-                print('📦 Последний товар: id=${_products[_products.length - 1].id}, name=${_products[_products.length - 1].name}, shopId=${_products[_products.length - 1].shopId}');
+              final futures = batch.map((page) => _apiService.get(
+                    AppConfig.productsEndpoint,
+                    queryParameters: {'limit': limit, 'page': page},
+                  ));
+              final results = await Future.wait(futures);
+              for (final res in results) {
+                if (res.statusCode == 200 && res.data is Map && (res.data as Map).containsKey('data')) {
+                  final list = (res.data as Map)['data'] as List;
+                  allProducts.addAll(
+                    list.map((json) => ProductModel.fromJson(json as Map<String, dynamic>)).toList(),
+                  );
+                }
               }
-              // Выводим все ID товаров для отладки
-              final ids = _products.map((p) => p.id).toList();
-              print('📦 Все ID товаров: $ids');
-            } else {
-              print('⚠️ Список товаров пуст!');
             }
-            
-            _filterProducts();
-            
-            // Сохраняем в кеш (перезаписываем старые данные)
-            await _cacheService.cacheProducts(_products);
-            await _cacheService.setLastSyncTime(DateTime.now());
-            
-            _error = null;
-          } else {
-            throw Exception('Ошибка загрузки товаров (код: ${response.statusCode})');
           }
-        } catch (e) {
-          // Если ошибка сети - загружаем из кеша
-          print('⚠️ Ошибка загрузки с сервера, загружаем из кеша: $e');
+
+          _products = allProducts;
+          _filterProducts();
+          await _cacheService.cacheProducts(_products);
+          await _cacheService.setLastSyncTime(DateTime.now());
+          _error = null;
+        } else if (data is List) {
+          _products = data
+              .map((json) => ProductModel.fromJson(json as Map<String, dynamic>))
+              .toList();
+          _filterProducts();
+          await _cacheService.cacheProducts(_products);
+          await _cacheService.setLastSyncTime(DateTime.now());
+          _error = null;
+        } else {
+          if (cachedProducts.isEmpty) {
+            _products = [];
+            _filteredProducts = [];
+          }
+        }
+      } catch (e) {
+        if (cachedProducts.isEmpty) {
+          print('⚠️ Ошибка загрузки с сервера: $e');
           await _loadFromCache();
         }
-      } else {
-        // Нет интернета - загружаем из кеша
-        await _loadFromCache();
+      } finally {
+        _isBackgroundRefreshing = false;
+        _isLoading = false;
+        notifyListeners();
       }
     } catch (e) {
       print('❌ Ошибка загрузки товаров: $e');
-      // Пытаемся загрузить из кеша при любой ошибке
       await _loadFromCache();
-    } finally {
+      _isBackgroundRefreshing = false;
       _isLoading = false;
       notifyListeners();
     }
@@ -377,6 +402,7 @@ class ProductProvider extends ChangeNotifier {
       _error = 'Товар добавлен локально (нет интернета)';
       _isLoading = false;
       notifyListeners();
+      _schedulePendingProductsRetry();
       return true;
     } catch (e) {
       _error = 'Ошибка сохранения товара локально: $e';
@@ -462,9 +488,11 @@ class ProductProvider extends ChangeNotifier {
               }
             }
           } else {
+            print('❌ Товар не добавлен: HTTP ${response.statusCode}');
             failedProducts.add(entry);
           }
         } catch (e) {
+          print('❌ Ошибка синхронизации товара: $e');
           failedProducts.add(entry);
         }
       }
@@ -476,9 +504,13 @@ class ProductProvider extends ChangeNotifier {
       } else {
         await prefs.setString(_pendingProductsKey, jsonEncode(failedProducts));
         _pendingProductsCount = failedProducts.length;
+        print('⚠️ Не синхронизировано товаров: ${failedProducts.length}. Повтор через $_pendingProductsRetryDelaySeconds сек.');
+        _schedulePendingProductsRetry();
       }
     } catch (e) {
       print('❌ Ошибка синхронизации товаров: $e');
+      _pendingProductsRetryDelaySeconds = 15;
+      _schedulePendingProductsRetry();
     } finally {
       _isSyncingPendingProducts = false;
       notifyListeners();
@@ -502,34 +534,30 @@ class ProductProvider extends ChangeNotifier {
   
   Future<ProductModel?> findProductByBarcode(String barcode) async {
     try {
-      // Сначала ищем в кеше
+      // 1. Мгновенный поиск в уже загруженной памяти (_products) — без диска и сети
+      final inMemory = _products.where((p) => p.barcode == barcode).toList();
+      if (inMemory.isNotEmpty) return inMemory.first;
+
+      // 2. Кеш на диске (с in-memory кешем в CacheService — быстрый повторный доступ)
       final cachedProduct = await _cacheService.getCachedProductByBarcode(barcode);
-      if (cachedProduct != null) {
-        print('📦 Товар найден в кеше: ${cachedProduct.name}');
-      }
-      
+      if (cachedProduct != null) return cachedProduct;
+
       final hasInternet = await _connectivityService.hasInternetConnection();
-      
       if (hasInternet) {
         try {
-          // shopId берется из токена на бэкенде
           final response = await _apiService.get(
             '${AppConfig.productsEndpoint}/barcode/$barcode',
           );
-          
           if (response.statusCode == 200) {
             final product = ProductModel.fromJson(response.data);
-            // Обновляем в кеше
             await _cacheService.updateCachedProduct(product);
             return product;
           }
         } catch (e) {
-          print('⚠️ Ошибка поиска на сервере, используем кеш: $e');
+          // ignore
         }
       }
-      
-      // Возвращаем из кеша или null
-      return cachedProduct;
+      return null;
     } catch (e) {
       return null;
     }
@@ -537,20 +565,20 @@ class ProductProvider extends ChangeNotifier {
 
   Future<List<ProductModel>> findAllProductsByBarcode(String barcode) async {
     try {
+      // 1. Мгновенный поиск в памяти — без диска и сети
+      final inMemory = _products.where((p) => p.barcode == barcode).toList();
+      if (inMemory.isNotEmpty) return inMemory;
+
       final hasInternet = await _connectivityService.hasInternetConnection();
-      
       if (hasInternet) {
         try {
-          // shopId берется из токена на бэкенде
           final response = await _apiService.get(
             '${AppConfig.productsEndpoint}/barcode/$barcode/all',
           );
-          
           if (response.statusCode == 200) {
             final data = response.data;
             if (data is List) {
               final products = data.map((json) => ProductModel.fromJson(json)).toList();
-              // Обновляем в кеше
               for (final product in products) {
                 await _cacheService.updateCachedProduct(product);
               }
@@ -558,11 +586,10 @@ class ProductProvider extends ChangeNotifier {
             }
           }
         } catch (e) {
-          print('⚠️ Ошибка поиска на сервере, используем кеш: $e');
+          // ignore
         }
       }
-      
-      // Ищем в кеше
+
       final cachedProducts = await _cacheService.getCachedProducts();
       return cachedProducts.where((p) => p.barcode == barcode).toList();
     } catch (e) {
@@ -700,8 +727,10 @@ class ProductProvider extends ChangeNotifier {
     }
   }
   
-  /// Ручная синхронизация
+  /// Ручная синхронизация — всё: офлайн товары, офлайн продажи (callback), очередь обновлений
   Future<void> syncNow() async {
+    await syncPendingProducts();
+    await _afterSyncCallback?.call(); // синхронизация офлайн продаж
     await _syncPendingChanges();
   }
   

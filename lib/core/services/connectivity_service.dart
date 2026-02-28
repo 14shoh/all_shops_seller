@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import '../../config/app_config.dart';
 
 /// Сервис для проверки подключения к интернету
 class ConnectivityService {
@@ -11,11 +13,11 @@ class ConnectivityService {
   StreamController<bool>? _connectionController;
   bool _hasConnection = true;
 
-  /// Получить текущий статус подключения
+  /// Получить текущий статус подключения (только наличие сети, без пинга)
   Future<bool> hasConnection() async {
     try {
-      final result = await _connectivity.checkConnectivity();
-      _hasConnection = result != ConnectivityResult.none;
+      final results = await _connectivity.checkConnectivity();
+      _hasConnection = results.any((r) => r != ConnectivityResult.none);
       return _hasConnection;
     } catch (e) {
       print('❌ Ошибка проверки подключения: $e');
@@ -29,8 +31,8 @@ class ConnectivityService {
       _connectionController = StreamController<bool>.broadcast();
       
       _connectivity.onConnectivityChanged.listen(
-        (result) {
-          _hasConnection = result != ConnectivityResult.none;
+        (results) {
+          _hasConnection = results.any((r) => r != ConnectivityResult.none);
           _connectionController?.add(_hasConnection);
           print(_hasConnection 
               ? '✅ Подключение к интернету восстановлено' 
@@ -45,13 +47,26 @@ class ConnectivityService {
     return _connectionController!.stream;
   }
 
-  /// Проверить, есть ли активное подключение (не просто наличие сети, а реальный интернет)
+  /// Реальная проверка доступности сервера (пинг API)
   Future<bool> hasInternetConnection() async {
     try {
-      // Простая проверка - если есть подключение, считаем что есть интернет
-      // В реальном приложении можно добавить ping к серверу
-      return await hasConnection();
+      final hasNet = await hasConnection();
+      if (!hasNet) return false;
+
+      final uri = Uri.parse(AppConfig.baseUrl);
+      final socket = await Socket.connect(
+        uri.host,
+        uri.port,
+        timeout: const Duration(seconds: 5),
+      );
+      socket.destroy();
+      return true;
+    } on SocketException {
+      return false;
+    } on TimeoutException {
+      return false;
     } catch (e) {
+      print('⚠️ Ошибка пинга сервера: $e');
       return false;
     }
   }

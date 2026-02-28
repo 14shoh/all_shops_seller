@@ -15,16 +15,23 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static String _pendingSyncSubtitle(int total, int products, int sales, int updates) {
+    final parts = <String>[];
+    if (products > 0) parts.add('$products ${products == 1 ? 'товар' : 'товаров'}');
+    if (sales > 0) parts.add('$sales ${sales == 1 ? 'продажа' : 'продаж'}');
+    if (updates > 0) parts.add('$updates обнов.');
+    return 'Ожидает отправки: ${parts.join(', ')}';
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Загружаем товары при открытии главного экрана
-      context.read<ProductProvider>().loadProducts();
-      // Синхронизируем офлайн продажи
-      context.read<SaleProvider>().syncPendingSales();
-      // Синхронизируем офлайн товары
-      context.read<ProductProvider>().syncPendingProducts();
+      final productProvider = context.read<ProductProvider>();
+      final saleProvider = context.read<SaleProvider>();
+      productProvider.loadProducts();
+      // Сначала офлайн товары (реальные ID), затем офлайн продажи
+      productProvider.syncPendingProducts().then((_) => saleProvider.syncPendingSales());
     });
   }
 
@@ -35,6 +42,9 @@ class _HomePageState extends State<HomePage> {
     final saleProvider = context.watch<SaleProvider>();
     final isOffline = productProvider.isOffline || saleProvider.isOffline;
     final pendingSync = productProvider.pendingSyncCount;
+    final pendingProducts = productProvider.pendingProductsCount;
+    final pendingSales = saleProvider.pendingSalesCount;
+    final totalPending = pendingSync + pendingProducts + pendingSales;
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundPrimary,
@@ -45,7 +55,9 @@ class _HomePageState extends State<HomePage> {
               child: _HeaderCard(
                 username: authProvider.user?.username ?? 'Пользователь',
                 isOffline: isOffline,
-                pendingSync: pendingSync,
+                totalPending: totalPending,
+                pendingProducts: pendingProducts,
+                pendingSales: pendingSales,
               ),
             ),
 
@@ -110,9 +122,11 @@ class _HomePageState extends State<HomePage> {
                   pendingProductsCount: productProvider.pendingProductsCount,
                   isSyncingSales: saleProvider.isSyncingPendingSales,
                   isSyncingProducts: productProvider.isSyncingPendingProducts,
-                  onSyncNow: () {
-                    context.read<SaleProvider>().syncPendingSales();
-                    context.read<ProductProvider>().syncPendingProducts();
+                  onSyncNow: () async {
+                    final productProvider = context.read<ProductProvider>();
+                    final saleProvider = context.read<SaleProvider>();
+                    await productProvider.syncPendingProducts();
+                    await saleProvider.syncPendingSales();
                   },
                 ),
               ),
@@ -169,8 +183,8 @@ class _HomePageState extends State<HomePage> {
                                 Text(
                                   isOffline
                                       ? 'Офлайн режим: синхронизация будет позже'
-                                      : (pendingSync > 0
-                                          ? 'Ожидает отправки: $pendingSync'
+                                      : (totalPending > 0
+                                          ? _pendingSyncSubtitle(totalPending, pendingProducts, pendingSales, pendingSync)
                                           : 'Все данные синхронизированы'),
                                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                         color: AppTheme.textSecondary,
@@ -429,12 +443,16 @@ class _OfflineOperationsCard extends StatelessWidget {
 class _HeaderCard extends StatelessWidget {
   final String username;
   final bool isOffline;
-  final int pendingSync;
+  final int totalPending;
+  final int pendingProducts;
+  final int pendingSales;
 
   const _HeaderCard({
     required this.username,
     required this.isOffline,
-    required this.pendingSync,
+    required this.totalPending,
+    required this.pendingProducts,
+    required this.pendingSales,
   });
 
   @override
@@ -532,7 +550,11 @@ class _HeaderCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            isOffline ? 'Офлайн' : (pendingSync > 0 ? '+$pendingSync' : 'Ок'),
+                            isOffline
+                                ? 'Офлайн'
+                                : (totalPending > 0
+                                    ? '$totalPending ждёт'
+                                    : 'Ок'),
                             style: Theme.of(context).textTheme.labelMedium?.copyWith(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w800,

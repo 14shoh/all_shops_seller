@@ -20,18 +20,20 @@ void main() async {
     // Продолжаем работу, но даты будут отображаться в английском формате
   }
   
-  // Инициализируем провайдеры
+  // Инициализируем провайдеры (SaleProvider получает ProductProvider для таймера: сначала товары, потом продажи)
   final authProvider = AuthProvider();
   final productProvider = ProductProvider();
-  final saleProvider = SaleProvider();
+  final saleProvider = SaleProvider(productProvider: productProvider);
   final debtProvider = DebtProvider();
-  
-  // Проверяем авторизацию при запуске (загружаем данные пользователя из хранилища)
+
+  // При восстановлении связи синхронизацию запускает только ProductProvider: товары, затем продажи (без гонки)
+  productProvider.setAfterSyncCallback(() => saleProvider.syncPendingSales());
+
   await authProvider.initialize();
-  
-  // Если авторизован, загружаем товары и синхронизируем продажи
+
   if (authProvider.isAuthenticated) {
     await productProvider.loadProducts();
+    await productProvider.syncPendingProducts();
     await saleProvider.syncPendingSales();
   }
   

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart' show MobileScanner, Barcode;
 import '../../../../core/providers/product_provider.dart';
 import '../../../../core/constants/app_constants.dart';
@@ -61,7 +60,12 @@ class _ProductsListPageState extends State<ProductsListPage> {
 
   void _showEditProductDialog(ProductModel product) {
     final priceController = TextEditingController(text: product.purchasePrice.toStringAsFixed(2));
-    final quantityController = TextEditingController(text: product.quantity.toString());
+    final quantityController = TextEditingController(
+      text: product.isSoldByKg || product.isSoldByLiters
+          ? product.displayQuantity.toStringAsFixed(2)
+          : product.quantity.toString(),
+    );
+    final unit = product.unitType;
 
     showDialog(
       context: context,
@@ -82,12 +86,14 @@ class _ProductsListPageState extends State<ProductsListPage> {
             const SizedBox(height: 16),
             TextField(
               controller: quantityController,
-              decoration: const InputDecoration(
-                labelText: 'Количество',
-                prefixIcon: Icon(Icons.inventory),
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: 'Количество ($unit)',
+                prefixIcon: const Icon(Icons.inventory),
+                border: const OutlineInputBorder(),
               ),
-              keyboardType: TextInputType.number,
+              keyboardType: product.isSoldByPieces
+                  ? TextInputType.number
+                  : const TextInputType.numberWithOptions(decimal: true),
             ),
           ],
         ),
@@ -96,8 +102,17 @@ class _ProductsListPageState extends State<ProductsListPage> {
           ElevatedButton(
             onPressed: () async {
               final newPrice = double.tryParse(priceController.text);
-              final newQuantity = int.tryParse(quantityController.text);
-              if (newPrice == null || newQuantity == null) return;
+              if (newPrice == null) return;
+              int newQuantity;
+              if (product.isSoldByKg || product.isSoldByLiters) {
+                final val = double.tryParse(quantityController.text);
+                if (val == null || val <= 0) return;
+                newQuantity = (val * 1000).round();
+              } else {
+                final q = int.tryParse(quantityController.text);
+                if (q == null || q <= 0) return;
+                newQuantity = q;
+              }
 
               final success = await context.read<ProductProvider>().updateProduct(
                 product.id!,
@@ -154,7 +169,9 @@ class _ProductsListPageState extends State<ProductsListPage> {
             children: [
               ScreenHeader(
                 title: 'Товары',
-                subtitle: '${products.length} позиций на складе',
+                subtitle: productProvider.isBackgroundRefreshing
+                    ? 'Обновление... • ${products.length} позиций'
+                    : '${products.length} позиций на складе',
                 icon: Icons.inventory_2_rounded,
                 iconColor: AppTheme.primaryColor,
                 actions: [
@@ -225,7 +242,7 @@ class _ProductsListPageState extends State<ProductsListPage> {
               ),
               const SizedBox(height: AppTheme.paddingMD),
               Expanded(
-                child: isLoading
+                child: isLoading && products.isEmpty
                     ? const Center(child: CircularProgressIndicator())
                     : products.isEmpty
                         ? _buildEmptyState()
@@ -273,8 +290,9 @@ class _ProductsListPageState extends State<ProductsListPage> {
   }
 
   Widget _buildProductCard(ProductModel product) {
-    final quantityColor = product.quantity < 10 ? AppTheme.errorColor : AppTheme.successColor;
-    final quantityBgColor = product.quantity < 10 ? const Color(0xFFFEE2E2) : const Color(0xFFD1FAE5);
+    final threshold = product.isSoldByPieces ? 10 : 10000; // для кг/л — 10 кг = 10000 г
+    final quantityColor = product.quantity < threshold ? AppTheme.errorColor : AppTheme.successColor;
+    final quantityBgColor = product.quantity < threshold ? const Color(0xFFFEE2E2) : const Color(0xFFD1FAE5);
     
     return AppCard(
       onTap: () => _showEditProductDialog(product),
@@ -324,7 +342,7 @@ class _ProductsListPageState extends State<ProductsListPage> {
                   borderRadius: BorderRadius.circular(AppTheme.radiusSM),
                 ),
                 child: Text(
-                  '${product.quantity} шт.',
+                  '${product.displayQuantity.toStringAsFixed(product.isSoldByPieces ? 0 : 2)} ${product.unitType}',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: quantityColor),
                 ),
               ),
